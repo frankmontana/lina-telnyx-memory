@@ -29,6 +29,30 @@ function getLocalParts(timeZone) {
   return { now, date, time, weekday };
 }
 
+const SCHEDULE_WINDOW_MINUTES = 15;
+
+function timeToMinutes(time) {
+  const match = /^(\d{2}):(\d{2})$/.exec(time || "");
+  if (!match) return null;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+
+  return hours * 60 + minutes;
+}
+
+function isWithinScheduleWindow(currentTime, preferredTime) {
+  const currentMinutes = timeToMinutes(currentTime);
+  const preferredMinutes = timeToMinutes(preferredTime);
+
+  if (currentMinutes == null || preferredMinutes == null) return false;
+
+  const diff = currentMinutes - preferredMinutes;
+  return diff >= 0 && diff < SCHEDULE_WINDOW_MINUTES;
+}
+
 function buildOpeningGreeting(contact, triggerType) {
   if (triggerType === "retry") {
     if (contact.first_name) {
@@ -84,6 +108,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  if (!process.env.CRON_SECRET) {
+    return res.status(500).json({ error: "Cron secret not configured" });
+  }
+
   const auth = req.headers.authorization;
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -108,7 +136,7 @@ export default async function handler(req, res) {
 
     const isScheduledDue =
       !contact.pending_retry_at &&
-      time === contact.preferred_time &&
+      isWithinScheduleWindow(time, contact.preferred_time) &&
       weekdays.includes(weekday) &&
       contact.last_call_local_date !== date;
 
